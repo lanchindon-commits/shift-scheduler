@@ -141,6 +141,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
   <h1>📅 夥伴排休系統</h1>
   <div id="userBox" style="display:none;">
     <span id="whoami"></span>
+    <button id="adminBtn" style="display:none;">管理帳號</button>
     <button id="changePassBtn">修改密碼</button>
     <button id="logoutBtn">登出</button>
   </div>
@@ -199,23 +200,28 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
   </div>
 </div>
 
+<div id="adminOverlay" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,.35); align-items:center; justify-content:center; z-index:20;">
+  <div style="background:#fff; border-radius:12px; padding:22px; width:340px; max-height:80vh; overflow-y:auto;">
+    <h3 style="margin-top:0; font-size:16px;">技師帳號管理</h3>
+
+    <div id="staffListBox" style="margin-bottom:16px;"></div>
+
+    <div style="border-top:1px solid #e2e6ee; padding-top:14px;">
+      <div style="font-size:13px; font-weight:600; margin-bottom:8px;">新增技師</div>
+      <label style="display:block; font-size:13px; margin:6px 0 4px; color:#555;">姓名</label>
+      <input type="text" id="newStaffName" style="width:100%; padding:9px; border:1px solid #e2e6ee; border-radius:8px; font-size:14px; box-sizing:border-box;">
+      <label style="display:block; font-size:13px; margin:10px 0 4px; color:#555;">密碼（至少 6 碼）</label>
+      <input type="password" id="newStaffPass" style="width:100%; padding:9px; border:1px solid #e2e6ee; border-radius:8px; font-size:14px; box-sizing:border-box;">
+      <button id="addStaffBtn" style="width:100%; margin-top:10px; padding:10px; background:#3b6fd6; color:#fff; border:none; border-radius:8px; font-size:14px; cursor:pointer;">新增</button>
+    </div>
+
+    <div id="adminMsg" style="font-size:13px; color:#e0654d; min-height:16px; margin-top:10px;"></div>
+    <button id="adminCloseBtn" style="width:100%; margin-top:8px; padding:9px; background:#f1f1f1; border:none; border-radius:8px; cursor:pointer; font-size:13px;">關閉</button>
+  </div>
+</div>
+
 <script>
-// Build the login dropdown FIRST, independent of the Supabase CDN script,
-// so the name list always shows even if the CDN library fails to load.
-const STAFF_LIST = [
-  { email: 'staff1@shift.local', name: '尚霖' },
-  { email: 'staff2@shift.local', name: '阿光' },
-  { email: 'staff3@shift.local', name: '阿傑' },
-  { email: 'staff4@shift.local', name: '阿維' },
-  { email: 'staff5@shift.local', name: '阿信' },
-];
 const loginNameSel = document.getElementById('loginName');
-STAFF_LIST.forEach(s => {
-  const opt = document.createElement('option');
-  opt.value = s.email;
-  opt.textContent = s.name;
-  loginNameSel.appendChild(opt);
-});
 
 const SUPABASE_URL = "https://emftgoiffggbsfndlvqb.supabase.co";
 const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVtZnRnb2lmZmdnYnNmbmRsdnFiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODU5ODY1MTIsImV4cCI6MjEwMTU2MjUxMn0.TY4E-sAtRGsNwrF4QW7Uf6XXgB5s1NmBpYqI0DTQGOE";
@@ -226,6 +232,30 @@ if (typeof supabase === 'undefined') {
     '無法載入登入元件（外部程式庫 supabase-js 載入失敗）。請確認網路連線正常，或此頁面未被廣告攔截器/防火牆擋住 cdn.jsdelivr.net。';
 } else {
   sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+  loadLoginNames();
+}
+
+// Populate the login dropdown from the profiles table so new staff added by
+// an admin show up automatically, without needing a code change/redeploy.
+async function loadLoginNames() {
+  const { data, error } = await sb
+    .from('profiles')
+    .select('id, display_name, email, role')
+    .order('role', { ascending: false })
+    .order('display_name');
+  loginNameSel.innerHTML = '';
+  if (error || !data) {
+    const opt = document.createElement('option');
+    opt.textContent = '無法載入名單，請重新整理';
+    loginNameSel.appendChild(opt);
+    return;
+  }
+  data.forEach(p => {
+    const opt = document.createElement('option');
+    opt.value = p.email;
+    opt.textContent = p.role === 'admin' ? `${p.display_name}（管理者）` : p.display_name;
+    loginNameSel.appendChild(opt);
+  });
 }
 
 let currentUser = null;   // { id, display_name }
@@ -300,6 +330,75 @@ document.getElementById('pwSaveBtn').onclick = async () => {
   setTimeout(() => { document.getElementById('pwOverlay').style.display = 'none'; }, 1200);
 };
 
+async function callManageStaff(payload) {
+  const { data: { session } } = await sb.auth.getSession();
+  const res = await fetch(SUPABASE_URL + '/functions/v1/manage-staff', {
+    method: 'POST',
+    headers: {
+      'Authorization': 'Bearer ' + session.access_token,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(payload)
+  });
+  return res.json();
+}
+
+async function loadStaffPanel() {
+  const box = document.getElementById('staffListBox');
+  box.textContent = '載入中…';
+  const result = await callManageStaff({ action: 'list' });
+  if (result.error) { box.textContent = '載入失敗：' + result.error; return; }
+  box.innerHTML = '';
+  result.staff.forEach(p => {
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex; justify-content:space-between; align-items:center; padding:8px 0; border-bottom:1px solid #f0f0f0; font-size:14px;';
+    const label = document.createElement('span');
+    label.textContent = p.display_name + (p.role === 'admin' ? '（管理者）' : '');
+    row.appendChild(label);
+    if (p.role !== 'admin') {
+      const delBtn = document.createElement('button');
+      delBtn.textContent = '刪除';
+      delBtn.style.cssText = 'background:#e0654d; color:#fff; border:none; border-radius:6px; padding:5px 10px; font-size:12px; cursor:pointer;';
+      delBtn.onclick = async () => {
+        if (!confirm(`確定要刪除「${p.display_name}」的帳號嗎？此動作無法復原。`)) return;
+        const delResult = await callManageStaff({ action: 'delete', user_id: p.id });
+        if (delResult.error) { document.getElementById('adminMsg').textContent = '刪除失敗：' + delResult.error; return; }
+        loadStaffPanel();
+        loadLoginNames();
+      };
+      row.appendChild(delBtn);
+    }
+    box.appendChild(row);
+  });
+}
+
+document.getElementById('adminBtn').onclick = () => {
+  document.getElementById('adminMsg').textContent = '';
+  document.getElementById('newStaffName').value = '';
+  document.getElementById('newStaffPass').value = '';
+  document.getElementById('adminOverlay').style.display = 'flex';
+  loadStaffPanel();
+};
+document.getElementById('adminCloseBtn').onclick = () => {
+  document.getElementById('adminOverlay').style.display = 'none';
+};
+document.getElementById('addStaffBtn').onclick = async () => {
+  const name = document.getElementById('newStaffName').value.trim();
+  const pass = document.getElementById('newStaffPass').value;
+  const msg = document.getElementById('adminMsg');
+  msg.style.color = '#e0654d';
+  if (!name) { msg.textContent = '請輸入姓名'; return; }
+  if (pass.length < 6) { msg.textContent = '密碼至少要 6 碼'; return; }
+  const result = await callManageStaff({ action: 'create', display_name: name, password: pass });
+  if (result.error) { msg.textContent = '新增失敗：' + result.error; return; }
+  msg.style.color = '#2fa36b';
+  msg.textContent = `已新增「${name}」！`;
+  document.getElementById('newStaffName').value = '';
+  document.getElementById('newStaffPass').value = '';
+  loadStaffPanel();
+  loadLoginNames();
+};
+
 document.getElementById('prevBtn').onclick = () => { changeMonth(-1); };
 document.getElementById('nextBtn').onclick = () => { changeMonth(1); };
 
@@ -312,12 +411,17 @@ function changeMonth(delta) {
 
 async function afterLogin() {
   const { data: { user } } = await sb.auth.getUser();
-  const { data: profiles } = await sb.from('profiles').select('id, display_name');
+  const { data: profiles } = await sb.from('profiles').select('id, display_name, role');
   profilesMap = {};
-  (profiles || []).forEach(p => profilesMap[p.id] = p.display_name);
-  currentUser = { id: user.id, display_name: profilesMap[user.id] || user.email };
+  let myRole = 'staff';
+  (profiles || []).forEach(p => {
+    profilesMap[p.id] = p.display_name;
+    if (p.id === user.id) myRole = p.role;
+  });
+  currentUser = { id: user.id, display_name: profilesMap[user.id] || user.email, role: myRole };
 
   document.getElementById('whoami').textContent = `目前登入：${currentUser.display_name}`;
+  document.getElementById('adminBtn').style.display = currentUser.role === 'admin' ? 'inline-block' : 'none';
   document.getElementById('userBox').style.display = 'flex';
   document.getElementById('loginCard').style.display = 'none';
   document.getElementById('calArea').style.display = 'block';
@@ -404,25 +508,31 @@ function openModal(dateStr, dayRows) {
 
   const myRow = dayRows.find(r => r.user_id === currentUser.id);
   const regularTaken = dayRows.find(r => r.leave_type === 'regular');
+  const isAdmin = currentUser.role === 'admin';
 
-  if (myRow) {
-    const info = document.createElement('div');
-    info.style.fontSize = '13px';
-    info.style.marginBottom = '10px';
-    info.textContent = `你已排 ${myRow.leave_type === 'regular' ? '正常休假' : '特休'}`;
-    body.appendChild(info);
+  // Admins can cancel ANYONE's leave for this day; everyone else can only cancel their own.
+  const cancellableRows = isAdmin ? dayRows : (myRow ? [myRow] : []);
 
-    const cancelBtn = document.createElement('div');
-    cancelBtn.className = 'opt';
-    cancelBtn.textContent = '取消這天的休假';
-    cancelBtn.onclick = async () => {
-      const { error } = await sb.from('leave_requests').delete().eq('id', myRow.id);
-      if (error) { msg.textContent = '取消失敗，請再試一次'; return; }
-      closeModal();
-      renderCalendar();
-    };
-    body.appendChild(cancelBtn);
-    return;
+  if (cancellableRows.length > 0) {
+    cancellableRows.forEach(row => {
+      const info = document.createElement('div');
+      info.className = 'opt';
+      const label = (row.user_id === currentUser.id ? '你' : (profilesMap[row.user_id] || '未知'))
+        + ' 已排 ' + (row.leave_type === 'regular' ? '正常休假' : '特休')
+        + '（點擊取消）';
+      info.textContent = label;
+      info.onclick = async () => {
+        const { error } = await sb.from('leave_requests').delete().eq('id', row.id);
+        if (error) { msg.textContent = '取消失敗，請再試一次'; return; }
+        closeModal();
+        renderCalendar();
+      };
+      body.appendChild(info);
+    });
+    if (myRow || !isAdmin) return;
+    // admin viewing a day with other people's entries but no entry of their own:
+    // still show the cancel list above, and fall through to booking options below
+    // only if the slot is still open (rare case; admin accounts don't normally book).
   }
 
   // weekly limit: each person can only take ONE 正常休假 day per Mon-Sat week
