@@ -189,6 +189,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
         <li>正常休假：取消須提前至少 1 天，不能當天取消。</li>
         <li>特休：不限人數、不限週次，但同樣不能當天才申請或當天才取消。</li>
         <li>當天的紀錄（不論正常休假或特休）本人皆無法再變更或取消，如有特殊/緊急原因，請直接聯絡管理者登記處理。</li>
+        <li>已經過去的日期，所有紀錄一律鎖定，任何人（含管理者）都無法再新增、刪除或變更。</li>
         <li>週日固定公休，全員休息，不開放排休。</li>
       </ul>
     </div>
@@ -598,7 +599,14 @@ async function renderCalendar() {
         tag.textContent = (r.leave_type === 'regular' ? '休：' : '特休：') + name;
         cell.appendChild(tag);
       });
-      cell.onclick = () => openModal(dateStr, byDate[dateStr] || []);
+      // Past dates are fully locked (no add/delete/change by anyone, admins
+      // included) — just show what happened, don't open the edit modal.
+      if (dateStr < todayStr) {
+        cell.style.opacity = '0.55';
+        cell.style.cursor = 'default';
+      } else {
+        cell.onclick = () => openModal(dateStr, byDate[dateStr] || []);
+      }
     }
     grid.appendChild(cell);
   }
